@@ -1,0 +1,8 @@
+
+var x = 5+2.6
+
+for x in 0 ..< 12:
+    print(x)
+    print("cool")
+print("done")
+
