@@ -1,0 +1,19 @@
+var y = 123 + 7
+var x = 123
+if x > 4:
+    if y > 89:
+        if x == 6:
+            print("done")
+            print("cat")
+        else:
+            print("other case")
+
+    print("was greater than 4")
+    
+    
+    
+    
+    var a = 14
+
+
+var x = 65
