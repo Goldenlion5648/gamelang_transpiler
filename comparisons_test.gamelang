@@ -1,2 +1,9 @@
-if x > 4:
+
+var testing = 124
+
+init:
+    
+
+
+if testing > 4:
     print("done")
