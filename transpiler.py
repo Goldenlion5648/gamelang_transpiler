@@ -3,6 +3,7 @@ from enum import Enum, auto
 from collections import defaultdict
 import os
 import sys
+import re
 
 class TokenType(Enum):
     FOR_START = auto(),
@@ -131,6 +132,9 @@ class Token:
             case _:
                 return f"{self.value}"
 
+def join_tokens_to_string(tokens, sep=" ") -> str:
+    return sep.join(x.transpiled_value() for x in tokens)
+
 
 class Tokenizer:
     def __init__(self, text: str):
@@ -250,6 +254,7 @@ class Tokenizer:
                     current.append(char)
                 elif dots_seen == 1:
                     # 4..12
+                    self.step_back()
                     self.step_back()
                     # removes first dot
                     current.pop()
@@ -403,13 +408,49 @@ class Tokenizer:
         
         return self.result
 
+GLOBAL_SECTION = "globals"
+INIT_SECTION = "init"
+UPDATE_SECTION = "update"
+
+DEFAULT_SECTIONS = [
+    GLOBAL_SECTION,
+    INIT_SECTION,
+    UPDATE_SECTION,
+]
+
+def get_marker_name_for(section):
+    return section + "_MARKER"
+
+marker_to_section_name = {get_marker_name_for(x) : x for x in DEFAULT_SECTIONS}
+
+class Variable:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+
+    @property
+    def type(self):
+        if re.fullmatch(r"((\d+)?\.\d+)|(\d+?\.(\d+))", self.value):
+            return "f64"
+        if re.fullmatch(r"\d+", self.value):
+            return "i64"
+        if re.fullmatch('".+"', self.value):
+            return "string"
+        
+
 class TokenConsumer:
     
-    def __init__(self, tokens: list[Token]):
+    def __init__(self, tokens: list[Token], is_main=True):
         self.tokens = tokens.copy()
         self.pos = 0
         self.indent_stack = [0]
-        self.section_to_data = defaultdict(list)
+        self.section_to_data: dict[str, list[str]] = defaultdict(list)
+        self.current_section_stack = [GLOBAL_SECTION]
+        self.is_main = is_main
+        # self.global_variables
+
+        # self.section_to_data[INIT_SECTION].append()
 
         
     def consume_token(self) -> Token:
@@ -430,6 +471,9 @@ class TokenConsumer:
             return self.tokens[self.pos+1]
         return None
 
+    def get_current_section(self):
+        return self.current_section_stack[-1]
+
     def eat_variable_creation(self):
         result = []
         first_3_tokens = self.tokens[self.pos:self.pos+3]
@@ -444,18 +488,21 @@ class TokenConsumer:
                 self.pos += 3
                 while self.in_bounds() and (cur := self.consume_token()).type != TokenType.STATEMENT_SEP_NEW_LINE:
                     value_found.append(cur.transpiled_value())
-                # print(value_found)
                 variable_name = first_3_tokens[1]
-                result.append(f"{variable_name.value} :=")
-                
-                result.append(''.join(value_found))
-                if self.in_bounds():
-                    result.append(cur.transpiled_value())
-                # self.pos += 3
+                as_variable = Variable(variable_name, value_found[-1])
+                if self.get_current_section() == GLOBAL_SECTION:
+                    self.section_to_data[GLOBAL_SECTION].append(f"{variable_name.value}: {as_variable.type}\n")
+                    self.section_to_data[INIT_SECTION].append(f"{variable_name.value} = {value_found[-1]}\n")
+                    return ""
+                else:
+                    result.append(f"{variable_name.value} :=")
+                    result.append(''.join(value_found))
+                    if self.in_bounds():
+                        result.append(cur.transpiled_value())
                 return " ".join(result)
             case _:
-                transpiled = [x.value for x in first_3_tokens]
-                raise Exception(f"unknown variable creation syntax: {transpiled}")
+                og_version = [x.value for x in first_3_tokens]
+                raise Exception(f"unknown variable creation syntax: {og_version}")
 
 
     def eat_until_new_block_start(self, just_tokens=False):
@@ -499,9 +546,11 @@ class TokenConsumer:
         while len(self.indent_stack) and self.indent_stack[-1] > amount:
             self.indent_stack.pop()
             ret.append(" " * self.indent_stack[-1] + "}\n")
+            if len(self.indent_stack) == 1:
+                self.current_section_stack.pop()
         return ret
 
-    def make_output(self) -> str:
+    def get_output(self) -> str:
         starting_lines = """
                 package output
 
@@ -513,15 +562,15 @@ class TokenConsumer:
                 """.strip()
                 # main :: proc()
         starting_lines = "\n".join(line.strip() for line in starting_lines.splitlines())
-        self.tokens = [
+        prelude_tokens = [
             Token(TokenType.RAW_INSERT_LITERAL, (-1, 0), value=starting_lines),
-            # Token(TokenType.START_NEW_BLOCK_COLON, (-1, 1)),
             Token(TokenType.STATEMENT_SEP_NEW_LINE, (-1, 2)),
-            # Token(TokenType.INDENT, (-1, 2), 4),
-        ] + self.tokens + [
+        ]
+        prelude = None
+        if self.is_main:
+            prelude = TokenConsumer(prelude_tokens, False)
             # Token(TokenType.STATEMENT_SEP_NEW_LINE, (-1, 0)),
             # Token(TokenType.RAW_INSERT_LITERAL, (-1, 0), value="\n}"),
-        ]
         output = []
         while self.pos < len(self.tokens):
             token = self.tokens[self.pos]
@@ -531,23 +580,47 @@ class TokenConsumer:
                     output.append(self.eat_variable_creation())
                 case TokenType.IF_CONDITION_START:
                     output.append(self.eat_until_new_block_start())
-                
+                case TokenType.FOR_START:
+                    tokens_until_new_block = self.eat_until_new_block_start(True)
+                    match tokens_until_new_block:
+                        case [
+                                Token(type=TokenType.FOR_START), 
+                                Token(type=TokenType.VARIABLE, value=var_name), 
+                                Token(type=TokenType.IN),
+                                Token(type=TokenType.INT_NUMBER) | Token(type=TokenType.VARIABLE),
+                                Token(type=TokenType.LESS_THAN_RANGE) | Token(type=TokenType.LESS_EQUAL_RANGE),
+                                Token(type=TokenType.INT_NUMBER) | Token(type=TokenType.VARIABLE),
+                                *_
+                        ]:
+                            output.append(join_tokens_to_string(tokens_until_new_block))
+                        case _:
+                            output.append(self.eat_until_new_block_start())
                 case TokenType.FUNCTION_START:
                     tokens_until_new_block = self.eat_until_new_block_start(True)
                     match tokens_until_new_block:
+                        # situation like this
+                        # def update:
                         case [
                                 Token(type=TokenType.FUNCTION_START), 
                                 Token(type=TokenType.VARIABLE, value=func_name), 
                                 Token(type=TokenType.START_NEW_BLOCK_COLON),
                                 *_
                         ]:
+                            self.current_section_stack.append(func_name)
                             output.append(f"{func_name} :: proc() {{")
+                            if func_name == INIT_SECTION:
+                                output.append(f"\n// Globals init\n")
+                                output.append(get_marker_name_for(INIT_SECTION))
+                            
+                        # situation like this
+                        # def update(some_var1 : int):
                         case [
                                 Token(type=TokenType.FUNCTION_START), 
                                 Token(type=TokenType.VARIABLE, value=func_name), 
                                 *inside,
                                 Token(type=TokenType.START_NEW_BLOCK_COLON),
                         ]:
+                            self.current_section_stack.append(func_name)
                             inside_transpiled = " ".join([x.transpiled_value() for x in inside])
                             output.append(f"{func_name} :: proc{inside_transpiled} {{")
                         case _:
@@ -570,7 +643,22 @@ class TokenConsumer:
                     # print("direct transpile for", unknown)
                     output.append(self.consume_token().transpiled_value())
         # output.extend(self.handle_indent(True))
+
+        if prelude is not None:
+            output = [prelude.get_output()] + self.section_to_data[GLOBAL_SECTION] + output
+        else:
+            output = self.section_to_data[INIT_SECTION] + output
+            
+        # raylib window init
+        self.section_to_data[INIT_SECTION].append("""using rl
+rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
+rl.InitWindow(screen_width, screen_height, "Odin + Raylib on the web")""")
+            
         output.extend(self.remove_indentation_to_match_amount(0))
+        for i, line in enumerate(output):
+            if line in marker_to_section_name:
+                output[i] = "".join(self.section_to_data[marker_to_section_name[line]])
+        print(self.section_to_data)
         return "".join(output)
                     
 
@@ -606,7 +694,7 @@ if __name__ == "__main__":
         data = f.read()
         runner = Tokenizer(data)
         consumer = TokenConsumer(runner.result)
-    output = consumer.make_output()
+    output = consumer.get_output()
     with open("output.odin", 'w') as f:
         f.write(output)
     print("Ran:\n", to_run, sep='')

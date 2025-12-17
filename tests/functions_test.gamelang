@@ -1,11 +1,19 @@
 
+var cat = 5
+var testing = 124
+var screen_width = 1280
+var screen_height = 720
+var hi = "hello"
+var exact = 4.234
+
+
 def init:
-    var testing = 124
     for i in 1..<10:
-        print("greater")
+        print("count")
 
 
 
+var global_test = 123
 
 def update:
     if testing > 4:
@@ -17,4 +25,9 @@ def update:
 
 def make_grid(x_dim, y_dim : int) -> int:  
     return 6
+
+
+def main:
+    init()
+    update()
 
