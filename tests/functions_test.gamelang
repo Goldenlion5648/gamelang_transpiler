@@ -1,10 +1,11 @@
-
 var cat = 5
 var testing = 124
 var screen_width = 1280
 var screen_height = 720
+var game_clock = 0
+var should_run = true
 var hi = "hello"
-var exact = 4.234
+var exact = .25
 
 
 def init:
@@ -16,10 +17,14 @@ def init:
 var global_test = 123
 
 def update:
-    if testing > 4:
-        print("greater")
-    else:
-        print("less")
+    # if testing > 4:
+    #     print("greater")
+    # else:
+    #     print("less")
+    # DrawRectangle(20, 80, 200, 20, RED)
+    if IsKeyPressed(.C):
+        should_run = false
+    
 
 
 
@@ -27,7 +32,4 @@ def make_grid(x_dim, y_dim : int) -> int:
     return 6
 
 
-def main:
-    init()
-    update()
 

@@ -5,28 +5,35 @@ import rl "vendor:raylib"
 
 // AUTO GENERATED,
 // CHANGES WILL BE OVERRIDDEN
-cat: i64
-testing: i64
-screen_width: i64
-screen_height: i64
+cat: i32
+testing: i32
+screen_width: i32
+screen_height: i32
+game_clock: i32
+should_run: bool
 hi: string
-exact: f64
-global_test: i64
-
+exact: f32
+global_test: i32
 
 
 init :: proc() {
-// Globals init
+// init setup
 cat = 5
 testing = 124
 screen_width = 1280
 screen_height = 720
+game_clock = 0
+should_run = true
 hi = "hello"
-exact = 4.234
+exact = .25
 global_test = 123
 using rl
-rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
-rl.InitWindow(screen_width, screen_height, "Odin + Raylib on the web")
+SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
+InitWindow(screen_width, screen_height, "Odin + Raylib on the web")
+SetTargetFPS(60)
+
+// end init setup
+
     for i in 1 ..< 10  {
         fmt.println("count")
 
@@ -36,23 +43,40 @@ rl.InitWindow(screen_width, screen_height, "Odin + Raylib on the web")
 
 
 update :: proc() {
-    if testing > 4 {
-        fmt.println("greater")
-    }
-    else {
-        fmt.println("less")
+using rl
+BeginDrawing()
+ClearBackground(SKYBLUE)
+
+    // if testing > 4:
+    //     print("greater")
+    // else:
+    //     print("less")
+    // DrawRectangle(20, 80, 200, 20, RED)
+    if IsKeyPressed ( .C ) {
+        should_run=false
 
 
+
     }
+
+EndDrawing()
+free_all(context.temp_allocator)
 }
 
 make_grid :: proc( x_dim : int ) -> int {
     return 6
 
+
+
 }
 
 main :: proc() {
+    using rl
     init()
-    update()
+    for should_run && ! WindowShouldClose ( )  {
+        update()
+    }
+    CloseWindow()
+
 }
 
