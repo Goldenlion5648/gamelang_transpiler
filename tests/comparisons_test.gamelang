@@ -1,9 +1,10 @@
 
 var testing = 124
 
-section init:
-    
+def init:
 
 
-if testing > 4:
-    print("done")
+
+def update:
+    if testing > 4:
+        print("done")

@@ -20,6 +20,8 @@ class TokenType(Enum):
 
     RAW_INSERT_LITERAL = auto()
     INDENT = auto()
+    RETURN_TYPE_ARROW = auto(),
+    TYPE_DEFINITION_COLON = auto(),
     START_NEW_BLOCK_COLON = auto(),
     DECLARE_VAR_VARIABLE_WORD = auto(),
     DECLARE_LET_VARIABLE_WORD = auto(),
@@ -34,6 +36,7 @@ class TokenType(Enum):
     OP_SUB = auto()
     OP_MULT = auto()
     OP_DIV = auto()
+    EMPTY_LINE_PASS = auto()
     COMPARE_EQUALS = auto()
     COMPARE_NOT_EQUALS = auto()
     COMPARE_LESS_THAN = auto()
@@ -46,15 +49,18 @@ class TokenType(Enum):
 token_type_to_string = {
     TokenType.FOR_START : "for",
     TokenType.IF_CONDITION_START : "if",
+    TokenType.FUNCTION_START : "def",
     TokenType.ELSE_CONDITION_START : "else",
     TokenType.ELIF_CONDITION_START : "else if",
     TokenType.AND_CONDITIONAL: "and",
     TokenType.OR_CONDITIONAL: "or",
     TokenType.IN : "in",
-    TokenType.FUNCTION_START : "def",
+    TokenType.EMPTY_LINE_PASS : "pass",
     TokenType.SECTION_START : "section",
     TokenType.VARIABLE : "some name",
     TokenType.START_NEW_BLOCK_COLON : ":",
+    TokenType.TYPE_DEFINITION_COLON : ":",
+    TokenType.RETURN_TYPE_ARROW : "->",
     TokenType.DECLARE_VAR_VARIABLE_WORD : "var",
     TokenType.DECLARE_LET_VARIABLE_WORD : "let",
     TokenType.DECLARE_CONST_VARIABLE_WORD : "const",
@@ -110,6 +116,10 @@ class Token:
                 return " {"
             case TokenType.STATEMENT_SEP_NEW_LINE:
                 return "\n"
+            case TokenType.EMPTY_LINE_PASS:
+                return ""
+            case TokenType.FUNCTION_START:
+                return "proc"
             case TokenType.STRING:
                 return f'"{self.value}"'
             case TokenType.LINE_COMMENT:
@@ -126,21 +136,38 @@ class Tokenizer:
     def __init__(self, text: str):
         self.pos = 0
         self.text = text
+        # self.text = "\n".join(line.rstrip() for line in self.text.splitlines())
         self.keywords_to_token_type = {
             "let": TokenType.DECLARE_LET_VARIABLE_WORD,
             "var": TokenType.DECLARE_VAR_VARIABLE_WORD,
             "in": TokenType.IN,
             "for": TokenType.FOR_START,
+            "pass": TokenType.EMPTY_LINE_PASS,
             "section": TokenType.SECTION_START,
             "def": TokenType.FUNCTION_START,
             "if": TokenType.IF_CONDITION_START,
             "else": TokenType.ELSE_CONDITION_START,
             "elif": TokenType.ELIF_CONDITION_START,
         }
+        self.expression_depth = 0
         self.result: list[Token] = []
         self.is_in_block = False
-        self.column_number = 1
-        self.line_number = 1
+        # self.column_number = 1
+        # self.line_number = 1
+        self.pos_to_line_and_col = {}
+        cur_line = 1
+        col = 1
+        for i, char in enumerate(self.text):
+            if char == NEW_LINE:
+                self.pos_to_line_and_col[i] = (cur_line, col)
+                cur_line += 1
+                col = 1
+            else:
+                self.pos_to_line_and_col[i] = (cur_line, col)
+                col += 1
+        for i in range(len(self.text), len(self.text)+10):
+            self.pos_to_line_and_col[i] = (cur_line, col)
+        print(self.pos_to_line_and_col)
 
         self.parse()
     
@@ -148,24 +175,25 @@ class Tokenizer:
         return self.pos < len(self.text)
     
     def get_cur_line_and_col(self):
-        return (self.line_number, self.column_number)
+        return self.pos_to_line_and_col[self.pos]
 
     def get_cur_char(self):
         return self.text[self.pos]
+
+    def peek_next(self):
+        if self.in_bounds():
+            return self.text[self.pos+1]
+        return None
     
     def consume_char(self):
         ret = self.text[self.pos]
-        if ret == NEW_LINE:
-            self.line_number += 1
-            self.column_number = 1
-        else:
-            self.column_number += 1
+        
         self.pos += 1
         return ret
 
     def step_back(self):
         self.pos -= 1
-        self.column_number -= 1
+        
 
     def make_token_of(self, type_, value=None, line_col_override=None):
         line_and_col = self.get_cur_line_and_col()
@@ -194,7 +222,8 @@ class Tokenizer:
             else:
                 spaces_count += 1
 
-        self.step_back()
+        if self.in_bounds():
+            self.step_back()
             
         if spaces_count > 0 and self.result and self.result[-1].type in [TokenType.STATEMENT_SEP_NEW_LINE, TokenType.START_NEW_BLOCK_COLON]:
             self.result.append(self.make_token_of(TokenType.INDENT, spaces_count, line_col_override=token_start))
@@ -246,7 +275,11 @@ class Tokenizer:
             self.step_back()
         word_found = "".join(current)
         if word_found in self.keywords_to_token_type:
-            return self.make_token_of(self.keywords_to_token_type[word_found], line_col_override=token_start)
+            new_token = self.make_token_of(self.keywords_to_token_type[word_found], line_col_override=token_start)
+            return new_token
+            # if new_token.type == TokenType.FUNCTION_START:
+            #     return self.make_token_of(TokenType.STRING, self.consume_until(["'", '"']))
+            # else:
         else:
             return self.make_token_of(TokenType.VARIABLE, word_found, line_col_override=token_start)
 
@@ -268,7 +301,7 @@ class Tokenizer:
             current.append(self.consume_char())
 
         if not self.in_bounds():
-            raise Exception("UnexpectedStringEnd")
+            raise Exception(f"UnexpectedStringEnd, {''.join(current)}")
         return "".join(current).strip("\n")
         # if char in terminator_strings:
             # return self.make_token_of(TokenType.STRING, "".join(current))
@@ -288,15 +321,21 @@ class Tokenizer:
             elif char == "'" or char == '"':
                 return self.make_token_of(TokenType.STRING, self.consume_until(["'", '"']))
             elif char == "(":
+                self.expression_depth += 1
                 return self.make_token_of(TokenType.EXPRESSION_START, line_col_override=token_start)
             elif char == ")":
+                self.expression_depth -= 1
                 return self.make_token_of(TokenType.EXPRESSION_END, line_col_override=token_start)
             elif char == "#":
                 return self.make_token_of(TokenType.LINE_COMMENT, self.consume_until(["\n"], False))
             elif char == "+":
                 return self.make_token_of(TokenType.OP_ADD, line_col_override=token_start)
             elif char == "-":
-                return self.make_token_of(TokenType.OP_SUB, line_col_override=token_start)
+                if self.get_cur_char() == ">":
+                    self.consume_char()
+                    return self.make_token_of(TokenType.RETURN_TYPE_ARROW, line_col_override=token_start)
+                else:
+                    return self.make_token_of(TokenType.OP_SUB, line_col_override=token_start)
             elif char == "*":
                 if self.get_cur_char() == "*":
                     self.consume_char()
@@ -308,7 +347,10 @@ class Tokenizer:
             elif char == "/":
                 return self.make_token_of(TokenType.OP_DIV, line_col_override=token_start)
             elif char == ":":
-                return self.make_token_of(TokenType.START_NEW_BLOCK_COLON, line_col_override=token_start)
+                if self.expression_depth > 0:
+                    return self.make_token_of(TokenType.TYPE_DEFINITION_COLON, line_col_override=token_start)
+                else:
+                    return self.make_token_of(TokenType.START_NEW_BLOCK_COLON, line_col_override=token_start)
             elif char == ".":
                 second_char = self.consume_char()
                 if second_char == ".":
@@ -335,15 +377,16 @@ class Tokenizer:
                     self.step_back()
                     return self.make_token_of(TokenType.COMPARE_GREATER_THAN, line_col_override=token_start)
 
-        if self.pos != len(self.text):
-            self.step_back()
-        return "".join(current)
+        # if self.pos != len(self.text):
+        #     self.step_back()
+        # return "".join(current)
 
 
     def parse(self):
         while self.in_bounds():
             self.eat_whitespace()
-        
+            if not self.in_bounds():
+                break
             cur_char = self.get_cur_char()
             if cur_char.isdigit():
                 self.result.append(self.eat_number())
@@ -367,7 +410,6 @@ class TokenConsumer:
         self.pos = 0
         self.indent_stack = [0]
         self.section_to_data = defaultdict(list)
-
 
         
     def consume_token(self) -> Token:
@@ -402,7 +444,7 @@ class TokenConsumer:
                 self.pos += 3
                 while self.in_bounds() and (cur := self.consume_token()).type != TokenType.STATEMENT_SEP_NEW_LINE:
                     value_found.append(cur.transpiled_value())
-                print(value_found)
+                # print(value_found)
                 variable_name = first_3_tokens[1]
                 result.append(f"{variable_name.value} :=")
                 
@@ -416,7 +458,7 @@ class TokenConsumer:
                 raise Exception(f"unknown variable creation syntax: {transpiled}")
 
 
-    def eat_until_colon(self):
+    def eat_until_new_block_start(self, just_tokens=False):
         result = []
         while self.in_bounds() and (cur := self.consume_token()).type != TokenType.START_NEW_BLOCK_COLON:
             result.append(cur)
@@ -424,14 +466,17 @@ class TokenConsumer:
         if self.in_bounds():
             result.append(cur)
         else:
-            raise Exception("if statement was not ended")
+            raise Exception("block was never ended")
+        if just_tokens:
+            return result
+        #avoids the space
         return " ".join(x.transpiled_value() for x in result[:-1]) + result[-1].transpiled_value()
 
     def handle_indent(self, should_go_to_no_indent=False):
         if self.in_bounds() and self.peek_next().type == TokenType.STATEMENT_SEP_NEW_LINE:
             self.consume_token()
             return []
-        print(self.indent_stack)
+        # print(self.indent_stack)
         """
         Handles this case:
         if whatever:
@@ -439,13 +484,7 @@ class TokenConsumer:
         V<<<<<HERE-----------------------
         print("outside")
         """
-        ret = []
-        while len(self.indent_stack) and (
-            (should_go_to_no_indent and self.indent_stack[-1] > 0) or 
-            (not should_go_to_no_indent and self.get_cur_token().value < self.indent_stack[-1])
-        ):
-            self.indent_stack.pop()
-            ret.append(" " * self.indent_stack[-1] + "}\n")
+        ret = self.remove_indentation_to_match_amount(self.get_cur_token().value)
         
         # we indented more
         if not should_go_to_no_indent and (
@@ -455,10 +494,14 @@ class TokenConsumer:
         ret.append(self.consume_token().transpiled_value())
         return ret
 
-    def remove_all_indent(self):
+    def remove_indentation_to_match_amount(self, amount):
+        ret = []
+        while len(self.indent_stack) and self.indent_stack[-1] > amount:
+            self.indent_stack.pop()
+            ret.append(" " * self.indent_stack[-1] + "}\n")
+        return ret
 
-
-    def make_output(self):
+    def make_output(self) -> str:
         starting_lines = """
                 package output
 
@@ -467,16 +510,18 @@ class TokenConsumer:
 
                 // AUTO GENERATED, 
                 // CHANGES WILL BE OVERRIDDEN
-
-                main :: proc()
                 """.strip()
+                # main :: proc()
         starting_lines = "\n".join(line.strip() for line in starting_lines.splitlines())
         self.tokens = [
             Token(TokenType.RAW_INSERT_LITERAL, (-1, 0), value=starting_lines),
-            Token(TokenType.START_NEW_BLOCK_COLON, (-1, 1)),
+            # Token(TokenType.START_NEW_BLOCK_COLON, (-1, 1)),
             Token(TokenType.STATEMENT_SEP_NEW_LINE, (-1, 2)),
             # Token(TokenType.INDENT, (-1, 2), 4),
-        ] + self.tokens
+        ] + self.tokens + [
+            # Token(TokenType.STATEMENT_SEP_NEW_LINE, (-1, 0)),
+            # Token(TokenType.RAW_INSERT_LITERAL, (-1, 0), value="\n}"),
+        ]
         output = []
         while self.pos < len(self.tokens):
             token = self.tokens[self.pos]
@@ -484,23 +529,49 @@ class TokenConsumer:
             match token.type:
                 case TokenType.DECLARE_VAR_VARIABLE_WORD:
                     output.append(self.eat_variable_creation())
-                case TokenType.DECLARE_VAR_VARIABLE_WORD:
-                    output.append(self.eat_variable_creation())
                 case TokenType.IF_CONDITION_START:
-                    output.append(self.eat_until_colon())
+                    output.append(self.eat_until_new_block_start())
+                
+                case TokenType.FUNCTION_START:
+                    tokens_until_new_block = self.eat_until_new_block_start(True)
+                    match tokens_until_new_block:
+                        case [
+                                Token(type=TokenType.FUNCTION_START), 
+                                Token(type=TokenType.VARIABLE, value=func_name), 
+                                Token(type=TokenType.START_NEW_BLOCK_COLON),
+                                *_
+                        ]:
+                            output.append(f"{func_name} :: proc() {{")
+                        case [
+                                Token(type=TokenType.FUNCTION_START), 
+                                Token(type=TokenType.VARIABLE, value=func_name), 
+                                *inside,
+                                Token(type=TokenType.START_NEW_BLOCK_COLON),
+                        ]:
+                            inside_transpiled = " ".join([x.transpiled_value() for x in inside])
+                            output.append(f"{func_name} :: proc{inside_transpiled} {{")
+                        case _:
+                            output.append(self.eat_until_new_block_start())
                 case TokenType.SECTION_START:
-                    output.append(self.eat_until_colon())
+                    output.append(self.eat_until_new_block_start())
                 case TokenType.INDENT:
                     output.extend(self.handle_indent())   
-                case TokenType.STATEMENT_SEP_NEW_LINE if self.peek_next().type != TokenType.INDENT:
-                    # output.append(self.consume_token().transpiled_value())
-                    output.extend(self.handle_indent(True))   
+                case TokenType.STATEMENT_SEP_NEW_LINE if self.peek_next() is None or self.peek_next().type not in [
+                            TokenType.INDENT, 
+                            TokenType.STATEMENT_SEP_NEW_LINE
+                ]:
+                    output.extend(self.remove_indentation_to_match_amount(0))
+                    output.append(self.consume_token().transpiled_value())
+
+                case TokenType.INT_NUMBER:
+                    output.append(" " + self.consume_token().transpiled_value())
 
                 case unknown:
                     # print("direct transpile for", unknown)
                     output.append(self.consume_token().transpiled_value())
-        output.extend(self.handle_indent(True))
-        return output
+        # output.extend(self.handle_indent(True))
+        output.extend(self.remove_indentation_to_match_amount(0))
+        return "".join(output)
                     
 
 
@@ -521,8 +592,8 @@ if __name__ == "__main__":
     from pathlib import Path
     options = list(Path.cwd().glob("tests/*.gamelang"))
     options.sort(key=lambda p: p.stat().st_mtime)
-    for x in options:
-        print(x)
+    # for x in options:
+    #     print(x)
     newest = max(
         Path.cwd().glob("tests/*.gamelang"),
         key=lambda p: p.stat().st_mtime,
@@ -531,15 +602,14 @@ if __name__ == "__main__":
 
 
     to_run = newest if "gamelang" not in " ".join(sys.argv) else sys.argv[1]
-    # print(to_run)
     with open(to_run) as f:
-        data = f.read().strip()
+        data = f.read()
         runner = Tokenizer(data)
         consumer = TokenConsumer(runner.result)
     output = consumer.make_output()
     with open("output.odin", 'w') as f:
-        f.writelines(output)
-    print(to_run)
+        f.write(output)
+    print("Ran:\n", to_run, sep='')
 
 
 
