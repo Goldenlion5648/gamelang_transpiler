@@ -1,0 +1,31 @@
+var screen_width = 1280
+var screen_height = 720
+var game_clock = 0
+var should_run = true
+var test: int
+# var collectables: [dynamic]Collectable
+
+var score = 0
+# var window_name: cstring = "score more"
+
+struct Collectable:
+    x, y: int
+    size: int
+    
+
+
+
+def init:
+    pass
+
+
+def update:
+    if IsKeyPressed(.C):
+        should_run = false
+    
+    if game_clock % 60 == 0:
+        score += 1
+    **
+    DrawText(fmt.ctprintf("%d", score), 8, 8, 40, BLACK)
+    **
+

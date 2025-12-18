@@ -9,6 +9,8 @@ var exact = .25
 
 
 def init:
+    defer:
+        print("end")
     for i in 1..<10:
         print("count")
 
@@ -21,9 +23,15 @@ def update:
     #     print("greater")
     # else:
     #     print("less")
-    # DrawRectangle(20, 80, 200, 20, RED)
+    DrawRectangle(20, 80, 200, 20, RED)
     if IsKeyPressed(.C):
         should_run = false
+
+    section outer:
+        if true:
+            print("123123")
+            break outer
+        print("bottom")
     
 
 

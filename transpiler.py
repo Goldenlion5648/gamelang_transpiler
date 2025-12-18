@@ -5,6 +5,9 @@ import os
 import sys
 import re
 
+SHOUD_SHOW_ORIGINAL_LINE_AND_COL = True
+
+
 class TokenType(Enum):
     FOR_START = auto(),
     IF_CONDITION_START = auto(),
@@ -14,11 +17,15 @@ class TokenType(Enum):
     AND_CONDITIONAL = auto(),
     OR_CONDITIONAL = auto(),
     FUNCTION_START = auto(),
+    STRUCT_START = auto(),
+    STRUCT_INSTANCE_OPEN_CURLY = auto(),
+    STRUCT_INSTANCE_CLOSE_CURLY = auto(),
     SECTION_START = auto(),
     VARIABLE = auto(),
     STRING = auto(),
     IN = auto(),
     LINE_COMMENT = auto(),
+    ARGUMENT_SEPARATOR_COMMA = auto(),
 
     RAW_INSERT_LITERAL = auto()
     INDENT = auto()
@@ -45,13 +52,14 @@ class TokenType(Enum):
     COMPARE_GREATER_THAN = auto()
     COMPARE_LESS_THAN_OR_EQUAL_TO = auto()
     COMPARE_GREATER_THAN_OR_EQUAL_TO = auto()
-    EXPRESSION_START = auto()
-    EXPRESSION_END = auto()
+    EXPRESSION_START_OPEN_PAREN = auto()
+    EXPRESSION_END_CLOSE_PAREN = auto()
 
 token_type_to_string = {
     TokenType.FOR_START : "for",
     TokenType.IF_CONDITION_START : "if",
     TokenType.FUNCTION_START : "def",
+    TokenType.STRUCT_START : "struct",
     TokenType.ELSE_CONDITION_START : "else",
     TokenType.ELIF_CONDITION_START : "else if",
     TokenType.AND_CONDITIONAL: "&&",
@@ -59,7 +67,6 @@ token_type_to_string = {
     TokenType.NOT_CONDITIONAL: "!",
     TokenType.IN : "in",
     TokenType.EMPTY_LINE_PASS : "pass",
-    TokenType.SECTION_START : "section",
     TokenType.VARIABLE : "some name",
     TokenType.START_NEW_BLOCK_COLON : ":",
     TokenType.TYPE_DEFINITION_COLON : ":",
@@ -75,11 +82,15 @@ token_type_to_string = {
     TokenType.LESS_EQUAL_RANGE : "..=",
     TokenType.LESS_THAN_RANGE : "..<",
     TokenType.OP_ADD : "+",
+    TokenType.ARGUMENT_SEPARATOR_COMMA : ",",
+    TokenType.SECTION_START : "section",
     TokenType.OP_SUB : "-",
     TokenType.OP_MULT : "*",
     TokenType.OP_DIV : "/",
-    TokenType.EXPRESSION_START : "(",
-    TokenType.EXPRESSION_END : ")",
+    TokenType.STRUCT_INSTANCE_OPEN_CURLY : "{",
+    TokenType.STRUCT_INSTANCE_CLOSE_CURLY : "}",
+    TokenType.EXPRESSION_START_OPEN_PAREN : "(",
+    TokenType.EXPRESSION_END_CLOSE_PAREN : ")",
     TokenType.COMPARE_EQUALS : "==",
     TokenType.COMPARE_NOT_EQUALS : "!=",
     TokenType.COMPARE_LESS_THAN : "<",
@@ -112,37 +123,45 @@ class Token:
         return f"{self.line_and_col} {self.type} {self.value} "
     
     def transpiled_value(self):
+        ret = None
         match self.type:
             case TokenType.INDENT:
-                return " " * self.value
+                ret = " " * self.value
             case TokenType.START_NEW_BLOCK_COLON:
-                return " {"
+                ret = " {"
             case TokenType.STATEMENT_SEP_NEW_LINE:
-                return "\n"
+                ret = "\n"
             case TokenType.EMPTY_LINE_PASS:
-                return ""
+                ret = ""
             case TokenType.FUNCTION_START:
-                return "proc"
+                ret = "proc"
             case TokenType.STRING:
-                return f'"{self.value}"'
+                ret = f'"{self.value}"'
             case TokenType.LINE_COMMENT:
-                return f'//{self.value}'
+                ret = f'//{self.value}'
             case TokenType.VARIABLE:
-                if self.value == "print":
-                    return f'fmt.println'
-                return f'{self.value}'
+                match self.value:
+                    case "print":
+                        ret = f'fmt.println'
+                    case "return":
+                        ret = f'return '
+                    case _:
+                        ret = f'{self.value}'
+            case TokenType.SECTION_START:
+                ret = ""
             case _:
-                return f"{self.value}"
+                ret = f"{self.value}"
+        return ret
 
 def join_tokens_to_string(tokens, sep=" ") -> str:
     return sep.join(x.transpiled_value() for x in tokens)
 
+get_transpiled_value_for_tokens = join_tokens_to_string
 
 class Tokenizer:
     def __init__(self, text: str):
         self.pos = 0
         self.text = text
-        # self.text = "\n".join(line.rstrip() for line in self.text.splitlines())
         self.keywords_to_token_type = {
             "let": TokenType.DECLARE_LET_VARIABLE_WORD,
             "var": TokenType.DECLARE_VAR_VARIABLE_WORD,
@@ -155,6 +174,7 @@ class Tokenizer:
             "pass": TokenType.EMPTY_LINE_PASS,
             "section": TokenType.SECTION_START,
             "def": TokenType.FUNCTION_START,
+            "struct": TokenType.STRUCT_START,
             "if": TokenType.IF_CONDITION_START,
             "else": TokenType.ELSE_CONDITION_START,
             "elif": TokenType.ELIF_CONDITION_START,
@@ -175,6 +195,7 @@ def main:
         update()
     CloseWindow()\n\n
 '''
+        self.text = "\n".join(line.rstrip() for line in self.text.splitlines())
         for i, char in enumerate(self.text):
             if char == NEW_LINE:
                 self.pos_to_line_and_col[i] = (cur_line, col)
@@ -336,16 +357,24 @@ def main:
                 return self.make_token_of(TokenType.ASSIGN_VALUE, line_col_override=token_start)
             elif char == "'" or char == '"':
                 return self.make_token_of(TokenType.STRING, self.consume_until(["'", '"']))
+            elif char == "{":
+                self.expression_depth += 1
+                return self.make_token_of(TokenType.STRUCT_INSTANCE_OPEN_CURLY, line_col_override=token_start)
+            elif char == "}":
+                self.expression_depth -= 1
+                return self.make_token_of(TokenType.STRUCT_INSTANCE_CLOSE_CURLY, line_col_override=token_start)
             elif char == "(":
                 self.expression_depth += 1
-                return self.make_token_of(TokenType.EXPRESSION_START, line_col_override=token_start)
+                return self.make_token_of(TokenType.EXPRESSION_START_OPEN_PAREN, line_col_override=token_start)
             elif char == ")":
                 self.expression_depth -= 1
-                return self.make_token_of(TokenType.EXPRESSION_END, line_col_override=token_start)
+                return self.make_token_of(TokenType.EXPRESSION_END_CLOSE_PAREN, line_col_override=token_start)
             elif char == "#":
                 return self.make_token_of(TokenType.LINE_COMMENT, self.consume_until(["\n"], False))
             elif char == "+":
                 return self.make_token_of(TokenType.OP_ADD, line_col_override=token_start)
+            elif char == ",":
+                return self.make_token_of(TokenType.ARGUMENT_SEPARATOR_COMMA, line_col_override=token_start)
             elif char == "-":
                 if self.get_cur_char() == ">":
                     self.consume_char()
@@ -363,10 +392,11 @@ def main:
             elif char == "/":
                 return self.make_token_of(TokenType.OP_DIV, line_col_override=token_start)
             elif char == ":":
-                if self.expression_depth > 0:
-                    return self.make_token_of(TokenType.TYPE_DEFINITION_COLON, line_col_override=token_start)
-                else:
+                cur = self.get_cur_char()
+                if cur == NEW_LINE:
                     return self.make_token_of(TokenType.START_NEW_BLOCK_COLON, line_col_override=token_start)
+                else:
+                    return self.make_token_of(TokenType.TYPE_DEFINITION_COLON, line_col_override=token_start)
             elif char == ".":
                 second_char = self.consume_char()
                 if second_char == ".":
@@ -392,6 +422,9 @@ def main:
                 else:
                     self.step_back()
                     return self.make_token_of(TokenType.COMPARE_GREATER_THAN, line_col_override=token_start)
+            else:
+                return self.make_token_of(TokenType.RAW_INSERT_LITERAL, char, line_col_override=token_start)
+
 
         # if self.pos != len(self.text):
         #     self.step_back()
@@ -436,6 +469,20 @@ def get_marker_name_for(section):
 
 marker_to_section_name = {get_marker_name_for(x) : x for x in DEFAULT_SECTIONS}
 
+class SectionType(Enum):
+    GLOBAL_SECTION = auto()
+    FUNCTION = auto()
+    STRUCT = auto()
+    PAREN_EXPRESSION = auto()
+    CURLY_EXPRESSION = auto()
+
+class Section:
+    def __init__(self, section_type, name):
+        self.section_type = section_type
+        self.name = name
+
+
+
 class Variable:
     def __init__(self, name, value):
         self.name = name
@@ -447,7 +494,7 @@ class Variable:
         if re.fullmatch(r"((\d+)?\.\d+)|(\d+?\.(\d+))", self.value):
             return "f32"
         if re.fullmatch(r"\d+", self.value):
-            return "i32"
+            return "int"
         if re.fullmatch('".+"', self.value):
             return "string"
         if re.fullmatch('true|false', self.value):
@@ -457,16 +504,45 @@ class Variable:
 class TokenConsumer:
     
     def __init__(self, tokens: list[Token], is_main=True):
-        self.tokens = tokens.copy()
+        self.tokens = self.get_clean_tokens(tokens)
         self.pos = 0
         self.indent_stack = [0]
         self.output = []
+        self.variable_was_declared_on_line = False
         self.section_to_data: dict[str, deque[str]] = defaultdict(deque)
-        self.current_section_stack = [GLOBAL_SECTION]
+        self.current_section_stack: list[Section] = [Section(SectionType.GLOBAL_SECTION, GLOBAL_SECTION)]
         self.is_main = is_main
         # self.global_variables
 
         # self.section_to_data[INIT_SECTION].append()
+    def get_clean_tokens(self, tokens_to_clean: list[Token]):
+        seen_stack = []
+        new_tokens = []
+        for token in tokens_to_clean:
+            match token.type:
+                case TokenType.STRUCT_INSTANCE_OPEN_CURLY:
+                    seen_stack.append(TokenType.STRUCT_INSTANCE_OPEN_CURLY)
+                case TokenType.STRUCT_INSTANCE_CLOSE_CURLY:
+                    if not seen_stack or seen_stack[-1] != TokenType.STRUCT_INSTANCE_OPEN_CURLY:
+                        raise Exception(f"Closing curly with no opening {token.line_and_col}")
+                    else:
+                        seen_stack.pop()
+                case TokenType.EXPRESSION_START_OPEN_PAREN:
+                    seen_stack.append(TokenType.EXPRESSION_START_OPEN_PAREN)
+                case TokenType.EXPRESSION_END_CLOSE_PAREN:
+                    if not seen_stack or seen_stack[-1] != TokenType.EXPRESSION_START_OPEN_PAREN:
+                        raise Exception(f"Closing parenthesis with no opening {token.line_and_col}")
+                    else:
+                        seen_stack.pop()
+                case TokenType.STATEMENT_SEP_NEW_LINE | TokenType.INDENT:
+                    if seen_stack:
+                        continue
+            new_tokens.append(token)
+        with open("tokens.txt", 'w') as f:
+            for part in new_tokens:
+                print(part, file=f)
+        return new_tokens
+
 
         
     def consume_token(self) -> Token:
@@ -487,6 +563,9 @@ class TokenConsumer:
             return self.tokens[self.pos+1]
         return None
 
+    def get_current_section_name(self):
+        return self.current_section_stack[-1].name
+
     def get_current_section(self):
         return self.current_section_stack[-1]
 
@@ -506,7 +585,7 @@ class TokenConsumer:
                     value_found.append(cur.transpiled_value())
                 variable_name = first_3_tokens[1]
                 as_variable = Variable(variable_name, value_found[-1])
-                if self.get_current_section() == GLOBAL_SECTION:
+                if self.get_current_section_name() == GLOBAL_SECTION:
                     self.section_to_data[GLOBAL_SECTION].append(f"{variable_name.value}: {as_variable.type}\n")
                     self.section_to_data[INIT_SECTION].append(f"{variable_name.value} = {value_found[-1]}\n")
                     return ""
@@ -516,12 +595,30 @@ class TokenConsumer:
                     if self.in_bounds():
                         result.append(cur.transpiled_value())
                 return " ".join(result)
+            case [
+                TokenType.DECLARE_VAR_VARIABLE_WORD, TokenType.VARIABLE, TokenType.TYPE_DEFINITION_COLON
+            ]:
+                #TODO: come back to handle paren
+                value_found = []
+                while self.in_bounds() and (cur := self.consume_token()).type != TokenType.STATEMENT_SEP_NEW_LINE:
+                    value_found.append(cur.transpiled_value())
+                variable_name = first_3_tokens[1]
+
+                # as_variable = Variable(variable_name, value_found[-1])
+                if self.get_current_section_name() == GLOBAL_SECTION:
+                    type_part_transpiled = "".join(value_found[3:])
+                    self.section_to_data[GLOBAL_SECTION].append(f"{variable_name.value}: {type_part_transpiled}\n")
+                    return ""
+                else:
+                    raise Exception("case for only type not handled")
+                return " ".join(result)
             case _:
                 og_version = [x.value for x in first_3_tokens]
                 raise Exception(f"unknown variable creation syntax: {og_version}")
 
 
-    def eat_until_new_block_start(self, just_tokens=False):
+    def eat_until_new_block_start(self, return_tokens=False) -> list[Token] | str:
+        '''output includes the colon'''
         result = []
         while self.in_bounds() and (cur := self.consume_token()).type != TokenType.START_NEW_BLOCK_COLON:
             result.append(cur)
@@ -530,7 +627,7 @@ class TokenConsumer:
             result.append(cur)
         else:
             raise Exception("block was never ended")
-        if just_tokens:
+        if return_tokens:
             return result
         #avoids the space
         return " ".join(x.transpiled_value() for x in result[:-1]) + result[-1].transpiled_value()
@@ -559,15 +656,15 @@ class TokenConsumer:
 
     def remove_indentation_to_match_amount(self, amount):
         ret = []
-        last_popped = None
         while len(self.indent_stack) and self.indent_stack[-1] > amount:
             self.indent_stack.pop()
             if len(self.indent_stack) == 1:
-                if self.current_section_stack[-1] == UPDATE_SECTION:
+                if self.get_current_section_name() == UPDATE_SECTION:
                     ret.append(get_marker_name_for(UPDATE_SECTION_END))
                     ret.append("\n")
                 self.current_section_stack.pop()
-            ret.append(" " * self.indent_stack[-1] + "}\n")
+            if self.get_current_section().section_type != SectionType.CURLY_EXPRESSION:
+                ret.append(" " * self.indent_stack[-1] + "}\n")
         return ret
 
     def get_output(self) -> str:
@@ -587,8 +684,8 @@ class TokenConsumer:
             Token(TokenType.STATEMENT_SEP_NEW_LINE, (-1, 2)),
         ]
         prelude = None
-        if self.is_main:
-            prelude = TokenConsumer(prelude_tokens, False)
+        # if self.is_main:
+        #     prelude = TokenConsumer(prelude_tokens, False)
             # Token(TokenType.STATEMENT_SEP_NEW_LINE, (-1, 0)),
             # Token(TokenType.RAW_INSERT_LITERAL, (-1, 0), value="\n}"),
         self.output = []
@@ -598,6 +695,22 @@ class TokenConsumer:
             match token.type:
                 case TokenType.DECLARE_VAR_VARIABLE_WORD:
                     self.output.append(self.eat_variable_creation())
+                case TokenType.VARIABLE if self.peek_next().type == TokenType.TYPE_DEFINITION_COLON:
+                    self.output.append(self.consume_token().transpiled_value())
+                    self.variable_was_declared_on_line = True
+                case TokenType.STRUCT_START:
+                    tokens_until_new_block = self.eat_until_new_block_start(True)
+                    match tokens_until_new_block:
+                        case [
+                                Token(type=TokenType.STRUCT_START), 
+                                Token(type=TokenType.VARIABLE, value=struct_name),
+                                Token(type=TokenType.START_NEW_BLOCK_COLON),
+                            ]:
+                            self.current_section_stack.append(Section(SectionType.STRUCT, struct_name))
+                            self.output.append(f"{struct_name} :: struct {{")
+                        case _:
+                            raise Exception(f"invalid struct creation {tokens_until_new_block[0].line_and_col}")
+                        
                 case TokenType.IF_CONDITION_START:
                     self.output.append(self.eat_until_new_block_start())
                 case TokenType.FOR_START:
@@ -626,7 +739,7 @@ class TokenConsumer:
                                 Token(type=TokenType.START_NEW_BLOCK_COLON),
                                 *_
                         ]:
-                            self.current_section_stack.append(func_name)
+                            self.current_section_stack.append(Section(SectionType.FUNCTION, func_name))
                             self.output.append(f"{func_name} :: proc() {{")
                             if func_name == INIT_SECTION:
                                 self.output.append("\n// init setup\n")
@@ -643,13 +756,14 @@ class TokenConsumer:
                                 *inside,
                                 Token(type=TokenType.START_NEW_BLOCK_COLON),
                         ]:
-                            self.current_section_stack.append(func_name)
+                            self.current_section_stack.append(Section(SectionType.FUNCTION, func_name))
                             inside_transpiled = " ".join([x.transpiled_value() for x in inside])
                             self.output.append(f"{func_name} :: proc{inside_transpiled} {{")
                         case _:
                             self.output.append(self.eat_until_new_block_start())
                 case TokenType.SECTION_START:
-                    self.output.append(self.eat_until_new_block_start())
+                    _, section_name, colon = self.eat_until_new_block_start(True)
+                    self.output.append(f"{section_name.transpiled_value()}:{colon.transpiled_value()}")
                 case TokenType.INDENT:
                     self.output.extend(self.handle_indent())   
                 case TokenType.STATEMENT_SEP_NEW_LINE if self.peek_next() is None or self.peek_next().type not in [
@@ -658,16 +772,43 @@ class TokenConsumer:
                 ]:
                     self.output.extend(self.remove_indentation_to_match_amount(0))
                     self.output.append(self.consume_token().transpiled_value())
-
-                case TokenType.INT_NUMBER:
-                    self.output.append(" " + self.consume_token().transpiled_value())
+                    self.variable_was_declared_on_line = False
+                case TokenType.STATEMENT_SEP_NEW_LINE:
+                    if (
+                        self.get_current_section().section_type == SectionType.STRUCT and 
+                        self.variable_was_declared_on_line
+                    ):
+                        self.output.append(",")
+                    self.output.append(self.consume_token().transpiled_value())
+                    self.variable_was_declared_on_line = False
+                case TokenType.ARGUMENT_SEPARATOR_COMMA:
+                    self.output.append(self.consume_token().transpiled_value() + " ")
+                # add spaces for cases like "using rl"
                 case TokenType.VARIABLE if self.peek_next().type == TokenType.VARIABLE:
                     self.output.append(self.consume_token().transpiled_value() + 
                     " " + self.consume_token().transpiled_value())
-
+                case TokenType.STRUCT_INSTANCE_OPEN_CURLY:
+                    self.current_section_stack.append(Section(SectionType.CURLY_EXPRESSION, "{"))
+                    self.output.append(self.consume_token().transpiled_value())
+                case TokenType.STRUCT_INSTANCE_CLOSE_CURLY:
+                    if self.get_current_section().section_type == SectionType.CURLY_EXPRESSION:
+                        self.current_section_stack.pop()
+                    else:
+                        raise Exception(f"No matching open curly {self.get_cur_token().line_and_col}")
+                    self.output.append(self.consume_token().transpiled_value())
+                # case TokenType.EXPRESSION_START_OPEN_PAREN:
+                #     self.current_section_stack.append(Section(SectionType.CURLY_EXPRESSION, "("))
+                #     self.output.append(self.consume_token().transpiled_value())
+                # case TokenType.EXPRESSION_END_CLOSE_PAREN:
+                #     if self.get_current_section().section_type == SectionType.PAREN_EXPRESSION:
+                #         self.current_section_stack.pop()
+                #     else:
+                #         raise Exception(f"No matching open '(' for this ')' {self.get_cur_token().line_and_col}")
+                #     self.output.append(self.consume_token().transpiled_value())
                 case unknown:
                     print("direct transpile for", unknown)
                     self.output.append(self.consume_token().transpiled_value())
+                    # raise Exception(f"straight compile for {unknown}")
         # output.extend(self.handle_indent(True))
 
         if prelude is not None:
@@ -688,7 +829,7 @@ class TokenConsumer:
         # raylib window init
         self.section_to_data[INIT_SECTION].append("""using rl
 SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
-InitWindow(screen_width, screen_height, "Odin + Raylib on the web")
+InitWindow(screen_width, screen_height, "score more")
 SetTargetFPS(60)
 """)
             
@@ -700,6 +841,7 @@ ClearBackground(SKYBLUE)
         # self.section_to_data[UPDATE_SECTION].append("}")
         self.section_to_data[UPDATE_SECTION_END].append("""
 EndDrawing()
+game_clock += 1
 free_all(context.temp_allocator)""")
             
                     

@@ -1,0 +1,47 @@
+var screen_width: i32 = 1280
+var screen_height: i32 = 720
+var game_clock = 0
+var should_run = true
+var test: int
+var collectables: [dynamic]Collectable
+
+var max_collectables = 20
+var score = 0
+# var window_name: cstring = "score more"
+
+
+struct Collectable:
+    x, y: i32
+    size: i32
+    
+
+def init:
+    pass
+
+
+def update:
+    if IsKeyPressed(.C):
+        should_run = false
+    
+    if game_clock % 60 == 0:
+        score += 1
+    
+    if len(collectables) < max_collectables:
+        append(&collectables, Collectable{
+            GetRandomValue(5, screen_width - 5), 
+            GetRandomValue(5, screen_height - 5),
+            GetRandomValue(5, 50),
+        })
+    
+    for collectable in collectables:
+        DrawRectangle(
+            collectable.x, 
+            collectable.y, 
+            collectable.size * 5, 
+            collectable.size * 5,
+            RED)
+        
+    **
+    DrawText(fmt.ctprintf("%d", score), 8, 8, 40, BLACK)
+    **
+
